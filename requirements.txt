@@ -9,3 +9,5 @@ python-multipart==0.0.20
 dvc==3.62.0
 tqdm==4.67.1
 httpx==0.28.1
+cassandra-driver==3.29.2
+cql==1.4.0
