@@ -1,0 +1,10 @@
+version: '3.10'
+
+services:
+  ml-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_PATH=/app/models/dogs_cats_cnn.keras
+    restart: unless-stopped

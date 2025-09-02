@@ -1,0 +1,11 @@
+fastapi==0.116.1
+uvicorn==0.35.0
+tensorflow==2.20.0
+pillow==11.3.0
+numpy==2.2.6
+scikit-learn==1.7.1
+pytest==8.4.1
+python-multipart==0.0.20
+dvc==3.62.0
+tqdm==4.67.1
+httpx==0.28.1
