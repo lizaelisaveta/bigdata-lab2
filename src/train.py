@@ -70,11 +70,20 @@ def train_model():
 
     for epoch in range(EPOCHS): 
         logger.info(f"===== Эпоха {epoch+1}/{EPOCHS} =====")
+
+        total_loss, total_acc, batches = 0.0, 0.0, 0
         for X, y in stream_batches_from_cassandra(batch_size=BATCH_SIZE):
-            model.train_on_batch(X, y)
+            metrics = model.train_on_batch(X, y, return_dict=True)
+            total_loss += metrics["loss"]
+            total_acc += metrics["accuracy"]
+            batches += 1
+
+        epoch_loss = total_loss / batches if batches > 0 else 0
+        epoch_acc = total_acc / batches if batches > 0 else 0
+
+        logger.info(f"🎯 Epoch {epoch+1}: accuracy={epoch_acc:.4f}, loss={epoch_loss:.4f}")
 
     os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-
     model.save(MODEL_PATH)
     logger.info(f"✅ Модель сохранена в {MODEL_PATH}")
 

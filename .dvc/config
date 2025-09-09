@@ -1,0 +1,5 @@
+[core]
+    remote = ycloud
+['remote "ycloud"']
+    url = s3://my-dvc-bucket09880/dvcstore
+    endpointurl = https://storage.yandexcloud.net
