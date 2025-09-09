@@ -1,66 +1,82 @@
+import logging
 import numpy as np
-from sklearn.model_selection import train_test_split
 from tensorflow import keras
-from keras.models import Sequential
-from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
-import argparse
-import os
-from src.config import app_config
-from src.cassandra_client import cassandra_client
+from keras import layers, models
+from cassandra.query import SimpleStatement
+import sys, os
+from tqdm import tqdm
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from src.cassandra_client import CassandraClient
+from src.config import IMG_WIDTH, IMG_HEIGHT, EPOCHS, BATCH_SIZE, MODEL_PATH
 
 
-def create_model(input_shape=(150, 150, 3)):
-    model = Sequential([
-        Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
-        MaxPooling2D(2, 2),
-        Conv2D(64, (3, 3), activation='relu'),
-        MaxPooling2D(2, 2),
-        Conv2D(128, (3, 3), activation='relu'),
-        MaxPooling2D(2, 2),
-        Flatten(),
-        Dense(512, activation='relu'),
-        Dropout(0.5),
-        Dense(1, activation='sigmoid')
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def stream_batches_from_cassandra(batch_size=500, max_buckets=50):
+    client = CassandraClient()
+
+    total_images = 0
+    used_buckets = 0
+
+    for bucket in tqdm(range(max_buckets), desc="📥 Загрузка данных из Cassandra"):
+        stmt = SimpleStatement(
+            "SELECT label, image FROM processed_data WHERE bucket = %s",
+            fetch_size=batch_size
+        )
+        rows = list(client.session.execute(stmt, (bucket,)))
+
+        if not rows:
+            continue
+
+        used_buckets += 1
+        total_images += len(rows)
+
+        for row in rows:
+            try:
+                img_array = np.frombuffer(row.image, dtype=np.float32)
+                img_array = img_array.reshape((IMG_HEIGHT, IMG_WIDTH, 3))
+                X = np.expand_dims(img_array, axis=0)
+                y = np.array([row.label], dtype=np.int32)
+                yield X, y
+            except Exception as e:
+                logger.error(f"❌ Ошибка при обработке строки: {e}")
+
+    logger.info(f"📊 Итог: использовано {used_buckets} бакетов, загружено {total_images} изображений")
+
+
+def build_model():
+    model = models.Sequential([
+        layers.Conv2D(32, (3, 3), activation="relu", input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)),
+        layers.MaxPooling2D((2, 2)),
+        layers.Conv2D(64, (3, 3), activation="relu"),
+        layers.MaxPooling2D((2, 2)),
+        layers.Conv2D(128, (3, 3), activation="relu"),
+        layers.MaxPooling2D((2, 2)),
+        layers.Flatten(),
+        layers.Dense(128, activation="relu"),
+        layers.Dense(1, activation="sigmoid")
     ])
+    model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
     return model
 
 
-def train_from_cassandra():    
-    print("Connecting to Cassandra...")
-    cassandra_client.connect()
-    
-    print("Loading processed data from Cassandra...")
-    X, y = cassandra_client.get_processed_data()
-    
-    print(f"Loaded {len(X)} samples from Cassandra")
-    print(f"X shape: {X.shape}, y shape: {y.shape}")
-    
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    model = create_model(input_shape=(IMG_HEIGHT, IMG_WIDTH, 3))
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-    
-    print("Training model...")
-    model.fit(X_train, y_train, epochs=args.epochs, batch_size=args.batch_size, 
-              validation_data=(X_val, y_val))
-    
+def train_model():
+    model = build_model()
+    logger.info("🚀 Начало обучения модели")
+
+    for epoch in range(EPOCHS): 
+        logger.info(f"===== Эпоха {epoch+1}/{EPOCHS} =====")
+        for X, y in stream_batches_from_cassandra(batch_size=BATCH_SIZE):
+            model.train_on_batch(X, y)
+
     os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+
     model.save(MODEL_PATH)
-    print(f"Model saved to {MODEL_PATH}")
-    
-    return model
+    logger.info(f"✅ Модель сохранена в {MODEL_PATH}")
 
 
-EPOCHS = int(app_config['model']['epochs'])
-BATCH_SIZE = int(app_config['model']['batch_size'])
-IMG_HEIGHT = int(app_config['model']['input_height'])
-IMG_WIDTH = int(app_config['model']['input_width'])
-MODEL_PATH = app_config['paths']['model_path']
-
-parser = argparse.ArgumentParser(description='Train Dogs vs Cats CNN from Cassandra data')
-parser.add_argument('--epochs', type=int, default=EPOCHS, help='Number of training epochs')
-parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help='Training batch size')
-args = parser.parse_args()
-
-
-train_from_cassandra()
+train_model()

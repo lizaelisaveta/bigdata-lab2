@@ -1,114 +1,85 @@
 import os
-from fastapi import FastAPI, File, UploadFile, HTTPException
+import logging
+import uuid
+import numpy as np
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from tensorflow import keras
 from keras.models import load_model
 from PIL import Image
-import numpy as np
-import io
-import logging
+import sys
 import os
-from contextlib import asynccontextmanager
 
-from src.config import app_config
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.cassandra_client import CassandraClient
+from src.config import IMG_WIDTH, IMG_HEIGHT, MODEL_PATH, API_HOST, API_PORT, MAX_FILE_SIZE
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-MODEL_PATH = app_config['paths']['model_path']
-IMG_HEIGHT = int(app_config['model']['input_height'])
-IMG_WIDTH = int(app_config['model']['input_width'])
-MAX_FILE_SIZE = int(app_config['api']['max_file_size'])
-API_PORT = int(app_config['api']['port'])
-API_HOST = app_config['api']['host']
-
+app = FastAPI(title="Cats vs Dogs API")
 model = None
+client = None
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global model
+
+@app.on_event("startup")
+def startup_event():
+    global model, client
     try:
-        if not os.path.exists(MODEL_PATH):
-            logger.warning(f"Model file not found at {MODEL_PATH}")
-        else:
-            logger.info(f"Loading model from {MODEL_PATH}...")
+        client = CassandraClient()
+        if os.path.exists(MODEL_PATH):
+            logger.info("Loading model...")
             model = load_model(MODEL_PATH)
-            logger.info(f"Model successfully loaded from {MODEL_PATH}")
+            logger.info("✅ Model loaded")
+        else:
+            logger.warning(f"⚠️ Model file {MODEL_PATH} not found. Train the model first!")
+            model = None
     except Exception as e:
-        logger.error(f"Error loading model: {e}")
-        model = None
-    yield  
-
-
-app = FastAPI(
-    title="Dogs vs Cats Classifier API",
-    description="API для классификации изображений собак и кошек",
-    version="1.0.0",
-    lifespan=lifespan
-)
-
-
-CLASS_NAMES = ["Cat", "Dog"]
-
-
-def preprocess_image(image_bytes):
-    try:
-        img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-        img = img.resize((IMG_WIDTH, IMG_HEIGHT))
-        img_array = np.array(img) / 255.0
-        img_array = np.expand_dims(img_array, axis=0)
-        return img_array
-    
-    except Exception as e:
-        logger.error(f"Error preprocessing image: {e}")
-        raise HTTPException(status_code=400, detail="Invalid image file")
+        logger.error(f"Failed to start API: {e}")
+        raise
 
 
 @app.get("/active")
-def activity_check():
-    return {
-        "status": "active" if model is not None else "model_not_loaded",
-        "model_loaded": model is not None,
-        "model_path": MODEL_PATH,
-        "image_size": f"{IMG_WIDTH}x{IMG_HEIGHT}"
-    }
+async def active():
+    return {"status": "ok", "model_loaded": model is not None}
 
 
-@app.post("/predict/")
+@app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     if model is None:
-        raise HTTPException(status_code=503, detail="Model is not loaded. Please check if model file exists.")
-    
-    if not file.content_type.startswith('image/'):
-        raise HTTPException(status_code=400, detail="File must be an image")
-    
+        raise HTTPException(status_code=503, detail="Model not available. Train it first.")
+
+    if not file.filename.lower().endswith((".jpg", ".jpeg", ".png")):
+        raise HTTPException(status_code=400, detail="Only JPG/PNG files are supported")
+
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large")
+
     try:
-        contents = await file.read()
-        
-        if len(contents) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail=f"File too large (max {MAX_FILE_SIZE} bytes)")
-        
-        processed_image = preprocess_image(contents)
-        prediction = model.predict(processed_image, verbose=0)
-        
-        predicted_class = CLASS_NAMES[int(prediction[0][0] > 0.5)]
-        confidence_score = float(prediction[0][0])
-        confidence = confidence_score if predicted_class == "Dog" else float(1 - confidence_score)
-        
-        logger.info(f"Prediction for {file.filename}: {predicted_class} ({confidence:.2f})")
-        
-        return JSONResponse(content={
-            "filename": file.filename,
-            "class": predicted_class,
-            "confidence": round(confidence, 4),
-            "raw_prediction": float(confidence_score),
-            "image_size": f"{IMG_WIDTH}x{IMG_HEIGHT}"
-        })
-    
-    except HTTPException:
-        raise
+        img = Image.open(file.file).convert("RGB")
+        img = img.resize((IMG_WIDTH, IMG_HEIGHT))
+        img_array = np.array(img) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+
+        predictions = model.predict(img_array)
+        class_idx = int(np.argmax(predictions))
+        confidence = float(np.max(predictions))
+        label = "dog" if class_idx == 1 else "cat"
+
+        prediction_id = uuid.uuid4()
+        client.insert_prediction(prediction_id, label, confidence)
+
+        return JSONResponse(
+            content={
+                "id": str(prediction_id),
+                "predicted_label": label,
+                "confidence": confidence,
+            }
+        )   
+
     except Exception as e:
-        logger.error(f"Prediction error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error during prediction")
+        logger.error(f"Prediction failed: {e}")
+        raise HTTPException(status_code=500, detail="Prediction failed")
