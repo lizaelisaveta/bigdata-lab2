@@ -1,18 +1,21 @@
 import configparser
 import os
-from pathlib import Path
 
+CONFIG_PATH = os.getenv("CONFIG_PATH", "config.ini")
 
-def load_config():
-    config = configparser.ConfigParser()
-    
-    config_path = Path(__file__).parent.parent / 'config.ini'
-    
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-    
-    config.read(config_path)
-    return config
+app_config = configparser.ConfigParser()
+app_config.read(CONFIG_PATH)
 
+IMG_HEIGHT = int(app_config["model"]["input_height"])
+IMG_WIDTH = int(app_config["model"]["input_width"])
+EPOCHS = int(app_config["model"]["epochs"])
+BATCH_SIZE = int(app_config["model"]["batch_size"])
+LEARNING_RATE = float(app_config["model"]["learning_rate"])
 
-app_config = load_config()
+MODEL_PATH = app_config["paths"]["model_path"]
+DATA_PATH = app_config["paths"]["data_path"]
+RAW_TRAIN = app_config["paths"]["raw_train"]
+
+API_HOST = app_config["api"]["host"]
+API_PORT = int(app_config["api"]["port"])
+MAX_FILE_SIZE = int(app_config["api"]["max_file_size"])

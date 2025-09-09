@@ -6,6 +6,8 @@ services:
     container_name: cassandra_db
     ports:
       - "9042:9042"
+    env_file:
+      - .env
     environment:
       - CASSANDRA_CLUSTER_NAME=MLCluster
       - CASSANDRA_DC=datacenter1
@@ -14,25 +16,33 @@ services:
     volumes:
       - cassandra_data:/var/lib/cassandra
     healthcheck:
-      test: ["CMD", "cqlsh", "-u", "cassandra", "-p", "cassandra", "-e", "describe keyspaces"]
-      interval: 30s
+      test: ["CMD", "cqlsh", "-u", "${CASSANDRA_USERNAME}", "-p", "${CASSANDRA_PASSWORD}", "-e", "describe keyspaces"]
+      interval: 10s
       timeout: 10s
-      retries: 5
+      retries: 10
+      start_period: 40s
 
   ml-api:
     build: .
+    container_name: ml-api
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
-      - CASSANDRA_HOST=cassandra
-      - CASSANDRA_PORT=9042
-      - CASSANDRA_USERNAME=cassandra
-      - CASSANDRA_PASSWORD=cassandra
-      - CASSANDRA_KEYSPACE=ml_results
+      CASSANDRA_HOST: cassandra
     depends_on:
       cassandra:
         condition: service_healthy
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/active"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 volumes:
   cassandra_data:
