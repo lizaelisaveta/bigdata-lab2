@@ -1,12 +1,13 @@
 # Dogs vs Cats Classifier - MLOps Pipeline
 
-CI/CD pipeline for ML model classification (Dogs vs Cats) for BigData course
+Interaction with database for ML model classification (Dogs vs Cats) for BigData course
 
 ## 🚀 Tech Stack
 
 - **ML Framework**: TensorFlow 2.x, Keras
 - **API Framework**: FastAPI
 - **Data Versioning**: DVC
+- **Database**: Cassandra
 - **Containerization**: Docker, Docker Compose
 - **CI/CD**: GitHub Actions
 - **Testing**: pytest, FastAPI TestClient
@@ -23,6 +24,8 @@ Dataset: Dogs vs Cats from Kaggle
 bigdata-lab/
 ├── src/
 │ ├── api.py # FastAPI application
+│ ├── cassandra_client.py # Connection client for Cassandra
+│ ├── config.py # Downloading configurations
 │ ├── train.py # Model training script
 │ └── preprocess.py # Data preprocessing
 ├── tests/
@@ -36,13 +39,11 @@ bigdata-lab/
 ```
 
 ## Workflow
-• Downloaded dataset from Kaggle.
+• Get fork of repo.
 
-• Preprocess data and train model.
+• Pull data from DVC.
 
-• Transformed research notebook into scripts.
-
-• Put dataset and model using DVC.
+• Init Cassandra and update code for preprocessing and training.
 
 • Created Dockerfile and docker-compose.yml, etc.
 
@@ -52,8 +53,8 @@ bigdata-lab/
 
 ### 1. Clone Repository
 ```bash
-git clone https://github.com/lizaelisaveta/bigdata-lab.git
-cd bigdata-lab
+git clone https://github.com/lizaelisaveta/bigdata-lab2.git
+cd bigdata-lab2
 ```
 
 ### 2. Install Dependencies (MacOS)
@@ -63,21 +64,30 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3.  Download Data & Model
+### 3.  Download Data
 ```bash
 dvc pull
 ```
 
-### 4. Run API Locally
-```bash
-uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
-```
-
-### 5. Run in Docker
+### 4. Run in Docker
 ```bash
 docker-compose up --build
 ```
 
+### 5. Run preprocessing in Docker
+```bash
+docker exec -it ml-api bash -c "python src/preprocess.py"
+```
+
+### 6. Run training of model in Docker
+```bash
+docker exec -it ml-api bash -c "python src/train.py"
+```
+
+### 7. Restart image in Docker
+```bash
+docker compose restart ml-api
+```
 
 ## 🧪 Testing
 
