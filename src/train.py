@@ -88,4 +88,5 @@ def train_model():
     logger.info(f"✅ Модель сохранена в {MODEL_PATH}")
 
 
-train_model()
+if __name__ == "__main__":
+    train_model()
